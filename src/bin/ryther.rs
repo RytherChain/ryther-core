@@ -7,7 +7,8 @@ use std::sync::Arc;
 use tracing::{info, error, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use ryther_core::node::{NodeConfig, RytherNode, start_rpc_server};
+use ryther_core::node::{NodeConfig, RytherNode, BlockStore, start_rpc_server};
+use ryther_core::types::block::Block;
 
 #[tokio::main]
 async fn main() {
@@ -73,6 +74,12 @@ async fn main() {
     }
     info!("Validator mode: {}", config.is_validator());
     
+    // Create block store and insert genesis
+    let blocks = Arc::new(BlockStore::new());
+    let genesis = Block::genesis(config.chain.chain_id);
+    blocks.insert_block(genesis);
+    info!("Genesis block created");
+    
     // Create node
     let rpc_addr = config.rpc.listen_addr;
     let rpc_enabled = config.rpc.enabled;
@@ -87,8 +94,9 @@ async fn main() {
             // Start RPC server if enabled
             if rpc_enabled {
                 let rpc_node = Arc::clone(&node);
+                let rpc_blocks = Arc::clone(&blocks);
                 tokio::spawn(async move {
-                    if let Err(e) = start_rpc_server(rpc_node, rpc_addr).await {
+                    if let Err(e) = start_rpc_server(rpc_node, rpc_blocks, rpc_addr).await {
                         error!("RPC server error: {}", e);
                     }
                 });

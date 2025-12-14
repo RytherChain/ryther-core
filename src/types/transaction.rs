@@ -273,8 +273,8 @@ mod tests {
     #[test]
     fn test_ordered_batch_sequence_assignment() {
         let txs: Vec<_> = (0..3).map(|i| DecryptedTransaction {
-            from: [i as u8; 20],
-            to: Some([0xFF; 20]),
+            from: Address([i as u8; 20]),
+            to: Some(Address([0xFF; 20])),
             value: U256::ZERO,
             gas_limit: 21000,
             gas_price: U256::from_u64(1_000_000_000),

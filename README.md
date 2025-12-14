@@ -9,13 +9,14 @@ A high-performance asynchronous Layer 1 blockchain implementation in Rust.
 - **Async State Storage (RytherDB)** - Jellyfish Merkle Tree with LRU caching
 - **Gossip-based P2P** - Efficient event propagation with reputation scoring
 - **Ethereum-compatible RPC** - JSON-RPC API compatible with existing tooling
+- **Threshold Encryption (MEV Protection)** - Commit-reveal scheme protecting against front-running
 
 ## Architecture
 
 ```
 ryther-core/
 ├── types/      - Core data types (events, transactions, validators)
-├── crypto/     - BLS12-381 signatures
+├── crypto/     - BLS12-381 signatures, Threshold Encryption, DKG
 ├── dag/        - DAG storage with concurrent access
 ├── consensus/  - Leader election and commit detection
 ├── execution/  - MVCC state and parallel executor
@@ -40,7 +41,7 @@ cargo run --bin ryther
 ```
 
 The node will:
-- Listen for P2P connections on port `30303`
+- Listen for P2P connections on port `10000` (default)
 - Expose JSON-RPC on port `8646`
 - Create a default `config.json` on first run
 
@@ -51,6 +52,7 @@ Edit `config.json` to customize:
 - P2P listen address and bootstrap peers
 - RPC endpoints
 - Execution parameters
+- Validator keys (if running as validator)
 
 ### RPC Examples
 
@@ -60,25 +62,23 @@ curl -X POST http://127.0.0.1:8646 \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"ryther_nodeInfo","params":[],"id":1}'
 
-# Get chain ID
+# Get latest block
 curl -X POST http://127.0.0.1:8646 \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}'
-
-# Get block number
-curl -X POST http://127.0.0.1:8646 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+  -d '{"jsonrpc":"2.0","method":"eth_getBlockByTag","params":["latest", true],"id":1}'
 ```
 
 ## Testing
 
 ```bash
-# Run all tests
+# Run all unit tests
 cargo test
 
-# Run with output
-cargo test -- --nocapture
+# Run integration tests
+cargo test --test integration_test
+
+# Run benchmarks
+cargo bench
 ```
 
 ## RPC Methods
@@ -91,6 +91,11 @@ cargo test -- --nocapture
 - `eth_getTransactionCount`
 - `eth_call`
 - `eth_estimateGas`
+- `eth_getBlockByNumber`
+- `eth_getBlockByHash`
+- `eth_getTransactionByHash`
+- `eth_getTransactionReceipt`
+- `eth_getLogs`
 
 ### Ryther-specific
 - `ryther_nodeInfo` - Node status and statistics

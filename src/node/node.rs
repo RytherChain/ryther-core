@@ -144,14 +144,43 @@ impl RytherNode {
         // Commit detector
         let commit_detector = CommitDetector::new(ValidatorSet::new(), [0u8; 32]);
         
+        // Load validator key if configured
+        let mut validator_key = None;
+        let mut validator_id = None;
+        
+        if let Some(ref val_config) = config.validator {
+            if val_config.key_path.exists() {
+                if let Ok(key_bytes) = std::fs::read(&val_config.key_path) {
+                    // Try to parse as raw bytes or hex
+                    let key_result = if key_bytes.len() == 32 {
+                         SecretKey::from_bytes(key_bytes.as_slice().try_into().unwrap())
+                    } else {
+                        // Assume hex (skip for now to keep simple, standard is raw in this context)
+                         SecretKey::from_bytes(key_bytes.as_slice().try_into().unwrap())
+                    };
+
+                    if let Ok(key) = key_result {
+                        let pub_key = key.public_key();
+                        validator_id = Some(ValidatorId(pub_key.to_bytes()));
+                        validator_key = Some(key);
+                        info!("Loaded validator key for {:?}", validator_id.as_ref().unwrap());
+                    } else {
+                         warn!("Failed to parse validator key from {:?}", val_config.key_path);
+                    }
+                } else {
+                     warn!("Failed to read validator key from {:?}", val_config.key_path);
+                }
+            }
+        }
+        
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         
         Self {
             config,
             state: RwLock::new(NodeState::Starting),
             peer_id,
-            validator_id: None,
-            validator_key: None,
+            validator_id,
+            validator_key,
             dag,
             validators,
             clock,

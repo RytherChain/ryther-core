@@ -8,9 +8,58 @@ pub mod event;
 pub mod transaction;
 pub mod validator;
 pub mod state;
+pub mod block;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+
+// Re-export block types
+pub use block::{Block, TransactionReceipt, Log, LogFilter, BlockId};
+
+/// Ethereum-compatible 20-byte address.
+#[derive(Clone, Copy, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct Address(pub [u8; 20]);
+
+impl Address {
+    pub const fn zero() -> Self {
+        Address([0u8; 20])
+    }
+    
+    pub fn from_slice(slice: &[u8]) -> Self {
+        let mut addr = [0u8; 20];
+        let len = slice.len().min(20);
+        addr[20 - len..].copy_from_slice(&slice[slice.len() - len..]);
+        Address(addr)
+    }
+    
+    pub fn as_bytes(&self) -> &[u8; 20] {
+        &self.0
+    }
+}
+
+impl From<[u8; 20]> for Address {
+    fn from(bytes: [u8; 20]) -> Self {
+        Address(bytes)
+    }
+}
+
+impl AsRef<[u8]> for Address {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "0x{}", hex::encode(&self.0))
+    }
+}
+
+impl fmt::Display for Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "0x{}", hex::encode(&self.0))
+    }
+}
 
 // ============================================================================
 // IDENTITY TYPES
@@ -76,9 +125,6 @@ impl<'de> Deserialize<'de> for ValidatorId {
     }
 }
 
-/// Ethereum-compatible 20-byte address.
-pub type Address = [u8; 20];
-
 /// BLS12-381 signature (96 bytes, compressed G2 point).
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct BlsSignature(pub [u8; 96]);
@@ -135,14 +181,18 @@ impl<'de> Deserialize<'de> for BlsSignature {
 /// Uniquely identifies a storage slot.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StateKey {
-    /// Contract address
-    pub address: Address,
+    /// Contract address (raw bytes)
+    pub address: [u8; 20],
     /// Storage slot (256-bit)
     pub slot: U256,
 }
 
 impl StateKey {
     pub fn new(address: Address, slot: U256) -> Self {
+        Self { address: address.0, slot }
+    }
+    
+    pub fn from_raw(address: [u8; 20], slot: U256) -> Self {
         Self { address, slot }
     }
     

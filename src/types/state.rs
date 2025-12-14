@@ -240,7 +240,6 @@ pub struct Log {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Address;
     
     fn make_key(addr: u8, slot: u64) -> StateKey {
         StateKey {

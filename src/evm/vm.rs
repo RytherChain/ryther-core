@@ -89,7 +89,7 @@ impl Default for BlockContext {
         Self {
             number: 0,
             timestamp: 0,
-            coinbase: [0; 20],
+            coinbase: Address::zero(),
             gas_limit: 30_000_000,
             base_fee: U256::from_u64(1_000_000_000), // 1 gwei
             chain_id: 1,
@@ -280,7 +280,7 @@ impl RytherVm {
         // Store code hash
         let code_hash = keccak256(&tx.data);
         let code_hash_key = StateKey {
-            address: contract_address,
+            address: contract_address.0,
             slot: U256::from_u64(SLOT_CODE_HASH),
         };
         state.write(code_hash_key, tx.sequence_number, Some(U256::from_be_bytes(code_hash)));
@@ -288,7 +288,7 @@ impl RytherVm {
         // Gas for creation
         let gas_used = 32000 + tx.data.len() as u64 * 200;
         
-        Ok((true, gas_used.min(tx.gas_limit), contract_address.to_vec(), vec![]))
+        Ok((true, gas_used.min(tx.gas_limit), contract_address.0.to_vec(), vec![]))
     }
     
     /// Compute CREATE address.
@@ -296,7 +296,7 @@ impl RytherVm {
         let mut data = Vec::new();
         data.push(0xd6); // RLP prefix
         data.push(0x94); // Address length
-        data.extend_from_slice(sender);
+        data.extend_from_slice(&sender.0);
         
         // RLP encode nonce
         if nonce == 0 {
@@ -314,21 +314,21 @@ impl RytherVm {
         let hash = keccak256(&data);
         let mut addr = [0u8; 20];
         addr.copy_from_slice(&hash[12..32]);
-        addr
+        Address(addr)
     }
     
     // State access helpers
     
     fn balance_key(address: &Address) -> StateKey {
         StateKey {
-            address: *address,
+            address: address.0,
             slot: U256::from_u64(SLOT_BALANCE),
         }
     }
     
     fn nonce_key(address: &Address) -> StateKey {
         StateKey {
-            address: *address,
+            address: address.0,
             slot: U256::from_u64(SLOT_NONCE),
         }
     }
@@ -403,8 +403,8 @@ mod tests {
     
     fn make_tx(from: u8, to: Option<u8>, value: u64, nonce: u64, seq: u64) -> DecryptedTransaction {
         DecryptedTransaction {
-            from: [from; 20],
-            to: to.map(|t| [t; 20]),
+            from: Address([from; 20]),
+            to: to.map(|t| Address([t; 20])),
             value: U256::from_u64(value),
             gas_limit: 100000,
             gas_price: U256::from_u64(1_000_000_000),
@@ -428,7 +428,7 @@ mod tests {
         let block = BlockContext::default();
         
         // Fund sender
-        let sender = [0xAA; 20];
+        let sender = Address([0xAA; 20]);
         let sender_balance_key = RytherVm::balance_key(&sender);
         state.write(sender_balance_key, 0, Some(U256::from_u64(1_000_000_000_000_000_000))); // 1 ETH
         state.mark_committed(&sender_balance_key, 0);
@@ -463,7 +463,7 @@ mod tests {
         let block = BlockContext::default();
         
         // Fund sender
-        let sender = [0xAA; 20];
+        let sender = Address([0xAA; 20]);
         let sender_balance_key = RytherVm::balance_key(&sender);
         state.write(sender_balance_key, 0, Some(U256::from_u64(1_000_000_000_000_000_000)));
         state.mark_committed(&sender_balance_key, 0);
@@ -483,7 +483,7 @@ mod tests {
         let block = BlockContext::default();
         
         // Fund sender
-        let sender = [0xAA; 20];
+        let sender = Address([0xAA; 20]);
         let sender_balance_key = RytherVm::balance_key(&sender);
         state.write(sender_balance_key, 0, Some(U256::from_u64(1_000_000_000_000_000_000)));
         state.mark_committed(&sender_balance_key, 0);
@@ -502,7 +502,7 @@ mod tests {
     fn test_create_address_computation() {
         let vm = RytherVm::new(1);
         
-        let sender: Address = [0x00; 20];
+        let sender = Address([0x00; 20]);
         let addr0 = vm.compute_create_address(&sender, 0);
         let addr1 = vm.compute_create_address(&sender, 1);
         
@@ -521,7 +521,7 @@ mod tests {
         let block = BlockContext::default();
         
         // Fund sender
-        let sender = [0xAA; 20];
+        let sender = Address([0xAA; 20]);
         let sender_balance_key = RytherVm::balance_key(&sender);
         state.write(sender_balance_key, 0, Some(U256::from_u64(1_000_000_000_000_000_000)));
         state.mark_committed(&sender_balance_key, 0);

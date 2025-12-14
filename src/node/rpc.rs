@@ -7,14 +7,16 @@ use axum::{
     Router,
     Json,
     extract::State,
-    http::StatusCode,
 };
 use tower_http::cors::{CorsLayer, Any};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::{info, error};
+use tracing::info;
 
 use super::node::RytherNode;
+use super::blocks::BlockStore;
+use crate::types::block::{Block, LogFilter, BlockId};
+use crate::types::Address;
 
 /// RPC request.
 #[derive(Debug, Deserialize)]
@@ -82,11 +84,16 @@ pub mod error_codes {
 #[derive(Clone)]
 pub struct RpcState {
     pub node: Arc<RytherNode>,
+    pub blocks: Arc<BlockStore>,
 }
 
 /// Start the RPC HTTP server.
-pub async fn start_rpc_server(node: Arc<RytherNode>, addr: SocketAddr) -> Result<(), String> {
-    let state = RpcState { node };
+pub async fn start_rpc_server(
+    node: Arc<RytherNode>,
+    blocks: Arc<BlockStore>,
+    addr: SocketAddr,
+) -> Result<(), String> {
+    let state = RpcState { node, blocks };
     
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -114,16 +121,18 @@ async fn handle_rpc(
     State(state): State<RpcState>,
     Json(request): Json<RpcRequest>,
 ) -> Json<RpcResponse> {
-    let response = process_request(&state.node, request).await;
+    let response = process_request(&state, request).await;
     Json(response)
 }
 
 /// Process an RPC request.
-async fn process_request(node: &RytherNode, request: RpcRequest) -> RpcResponse {
+async fn process_request(state: &RpcState, request: RpcRequest) -> RpcResponse {
+    let params = request.params.clone();
+    
     match request.method.as_str() {
         // === Ethereum-compatible methods ===
         "eth_chainId" => eth_chain_id(request.id),
-        "eth_blockNumber" => eth_block_number(node, request.id).await,
+        "eth_blockNumber" => eth_block_number(state, request.id).await,
         "eth_gasPrice" => eth_gas_price(request.id),
         "eth_getBalance" => eth_get_balance(request.id),
         "eth_getTransactionCount" => eth_get_transaction_count(request.id),
@@ -131,20 +140,29 @@ async fn process_request(node: &RytherNode, request: RpcRequest) -> RpcResponse 
         "eth_call" => eth_call(request.id),
         "eth_estimateGas" => eth_estimate_gas(request.id),
         
+        // === Block methods ===
+        "eth_getBlockByNumber" => eth_get_block_by_number(state, request.id, params).await,
+        "eth_getBlockByHash" => eth_get_block_by_hash(state, request.id, params).await,
+        "eth_getTransactionByHash" => eth_get_transaction_by_hash(state, request.id, params).await,
+        "eth_getTransactionReceipt" => eth_get_transaction_receipt(state, request.id, params).await,
+        "eth_getLogs" => eth_get_logs(state, request.id, params).await,
+        "eth_getCode" => eth_get_code(request.id),
+        "eth_getStorageAt" => eth_get_storage_at(request.id),
+        
         // === Ryther-specific methods ===
-        "ryther_nodeInfo" => ryther_node_info(node, request.id).await,
-        "ryther_dagInfo" => ryther_dag_info(node, request.id).await,
-        "ryther_getPeers" => ryther_get_peers(node, request.id).await,
-        "ryther_poolStatus" => ryther_pool_status(node, request.id).await,
+        "ryther_nodeInfo" => ryther_node_info(state, request.id).await,
+        "ryther_dagInfo" => ryther_dag_info(state, request.id).await,
+        "ryther_getPeers" => ryther_get_peers(state, request.id).await,
+        "ryther_poolStatus" => ryther_pool_status(request.id),
         
         // === Network methods ===
         "net_version" => net_version(request.id),
-        "net_peerCount" => net_peer_count(node, request.id).await,
+        "net_peerCount" => net_peer_count(state, request.id).await,
         "net_listening" => net_listening(request.id),
         
         // === Web3 methods ===
         "web3_clientVersion" => web3_client_version(request.id),
-        "web3_sha3" => web3_sha3(request.id, request.params),
+        "web3_sha3" => web3_sha3(request.id, params),
         
         _ => RpcResponse::error(
             request.id,
@@ -160,9 +178,9 @@ fn eth_chain_id(id: Value) -> RpcResponse {
     RpcResponse::success(id, json!("0x1"))
 }
 
-async fn eth_block_number(node: &RytherNode, id: Value) -> RpcResponse {
-    let stats = node.stats().await;
-    RpcResponse::success(id, json!(format!("0x{:x}", stats.current_round)))
+async fn eth_block_number(state: &RpcState, id: Value) -> RpcResponse {
+    let latest = state.blocks.latest_number();
+    RpcResponse::success(id, json!(format!("0x{:x}", latest)))
 }
 
 fn eth_gas_price(id: Value) -> RpcResponse {
@@ -189,36 +207,217 @@ fn eth_estimate_gas(id: Value) -> RpcResponse {
     RpcResponse::success(id, json!("0x5208")) // 21000
 }
 
+fn eth_get_code(id: Value) -> RpcResponse {
+    RpcResponse::success(id, json!("0x"))
+}
+
+fn eth_get_storage_at(id: Value) -> RpcResponse {
+    RpcResponse::success(id, json!("0x0000000000000000000000000000000000000000000000000000000000000000"))
+}
+
+// === Block methods ===
+
+async fn eth_get_block_by_number(state: &RpcState, id: Value, params: Option<Value>) -> RpcResponse {
+    let (block_id, _full_tx) = match parse_block_params(params) {
+        Ok(p) => p,
+        Err(e) => return RpcResponse::error(id, error_codes::INVALID_PARAMS, e),
+    };
+    
+    let block_num = match block_id {
+        BlockId::Number(n) => n,
+        BlockId::Tag(tag) if tag == "latest" => state.blocks.latest_number(),
+        BlockId::Tag(tag) if tag == "earliest" => 0,
+        BlockId::Tag(tag) if tag == "pending" => state.blocks.latest_number(),
+        _ => return RpcResponse::error(id, error_codes::INVALID_PARAMS, "Invalid block id".to_string()),
+    };
+    
+    match state.blocks.get_by_number(block_num) {
+        Some(block) => RpcResponse::success(id, serde_json::to_value(&*block).unwrap_or(json!(null))),
+        None => RpcResponse::success(id, json!(null)),
+    }
+}
+
+async fn eth_get_block_by_hash(state: &RpcState, id: Value, params: Option<Value>) -> RpcResponse {
+    let hash = match parse_hash_param(params) {
+        Ok(h) => h,
+        Err(e) => return RpcResponse::error(id, error_codes::INVALID_PARAMS, e),
+    };
+    
+    match state.blocks.get_by_hash(&hash) {
+        Some(block) => RpcResponse::success(id, serde_json::to_value(&*block).unwrap_or(json!(null))),
+        None => RpcResponse::success(id, json!(null)),
+    }
+}
+
+async fn eth_get_transaction_by_hash(state: &RpcState, id: Value, params: Option<Value>) -> RpcResponse {
+    let hash = match parse_hash_param(params) {
+        Ok(h) => h,
+        Err(e) => return RpcResponse::error(id, error_codes::INVALID_PARAMS, e),
+    };
+    
+    // Check if tx exists in any block
+    if let Some(block_num) = state.blocks.get_tx_block(&hash) {
+        if let Some(block) = state.blocks.get_by_number(block_num) {
+            for (i, tx) in block.transactions.iter().enumerate() {
+                if tx.0 == hash {
+                    return RpcResponse::success(id, json!({
+                        "hash": format!("0x{}", hex::encode(&hash)),
+                        "blockHash": format!("0x{}", hex::encode(&block.hash)),
+                        "blockNumber": format!("0x{:x}", block.number),
+                        "transactionIndex": format!("0x{:x}", i),
+                    }));
+                }
+            }
+        }
+    }
+    
+    RpcResponse::success(id, json!(null))
+}
+
+async fn eth_get_transaction_receipt(state: &RpcState, id: Value, params: Option<Value>) -> RpcResponse {
+    let hash = match parse_hash_param(params) {
+        Ok(h) => h,
+        Err(e) => return RpcResponse::error(id, error_codes::INVALID_PARAMS, e),
+    };
+    
+    match state.blocks.get_receipt(&hash) {
+        Some(receipt) => RpcResponse::success(id, serde_json::to_value(&receipt).unwrap_or(json!(null))),
+        None => RpcResponse::success(id, json!(null)),
+    }
+}
+
+async fn eth_get_logs(state: &RpcState, id: Value, params: Option<Value>) -> RpcResponse {
+    let filter = match parse_log_filter(params) {
+        Ok(f) => f,
+        Err(e) => return RpcResponse::error(id, error_codes::INVALID_PARAMS, e),
+    };
+    
+    let latest = state.blocks.latest_number();
+    let from_block = match filter.from_block {
+        Some(BlockId::Number(n)) => n,
+        Some(BlockId::Tag(ref t)) if t == "latest" => latest,
+        Some(BlockId::Tag(ref t)) if t == "earliest" => 0,
+        _ => 0,
+    };
+    let to_block = match filter.to_block {
+        Some(BlockId::Number(n)) => n,
+        Some(BlockId::Tag(ref t)) if t == "latest" => latest,
+        Some(BlockId::Tag(ref t)) if t == "earliest" => 0,
+        _ => latest,
+    };
+    
+    let addresses = filter.address.as_ref().map(|v| v.as_slice());
+    let topics: Option<Vec<Option<Vec<[u8; 32]>>>> = filter.topics.as_ref().map(|t| {
+        t.iter().map(|opt| opt.as_ref().map(|v| v.iter().map(|h| h.0).collect())).collect()
+    });
+    
+    let logs = state.blocks.get_logs(from_block, to_block, addresses, topics.as_deref());
+    
+    RpcResponse::success(id, serde_json::to_value(&logs).unwrap_or(json!([])))
+}
+
+// === Helper functions ===
+
+fn parse_block_params(params: Option<Value>) -> Result<(BlockId, bool), String> {
+    let arr = match params {
+        Some(Value::Array(a)) => a,
+        _ => return Ok((BlockId::Tag("latest".to_string()), false)),
+    };
+    
+    let block_id = match arr.get(0) {
+        Some(Value::String(s)) => {
+            if s.starts_with("0x") && s.len() == 66 {
+                // Hash
+                let bytes = hex::decode(s.trim_start_matches("0x"))
+                    .map_err(|_| "Invalid hash")?;
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&bytes);
+                BlockId::Hash(crate::types::block::TxHash(hash))
+            } else if s.starts_with("0x") {
+                // Number
+                let n = u64::from_str_radix(s.trim_start_matches("0x"), 16)
+                    .map_err(|_| "Invalid number")?;
+                BlockId::Number(n)
+            } else {
+                // Tag
+                BlockId::Tag(s.clone())
+            }
+        }
+        Some(Value::Number(n)) => BlockId::Number(n.as_u64().unwrap_or(0)),
+        _ => BlockId::Tag("latest".to_string()),
+    };
+    
+    let full_tx = arr.get(1)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    
+    Ok((block_id, full_tx))
+}
+
+fn parse_hash_param(params: Option<Value>) -> Result<[u8; 32], String> {
+    let arr = match params {
+        Some(Value::Array(a)) => a,
+        _ => return Err("Missing params".to_string()),
+    };
+    
+    let hash_str = arr.get(0)
+        .and_then(|v| v.as_str())
+        .ok_or("Missing hash")?;
+    
+    let bytes = hex::decode(hash_str.trim_start_matches("0x"))
+        .map_err(|_| "Invalid hash format")?;
+    
+    if bytes.len() != 32 {
+        return Err("Hash must be 32 bytes".to_string());
+    }
+    
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&bytes);
+    Ok(hash)
+}
+
+fn parse_log_filter(params: Option<Value>) -> Result<LogFilter, String> {
+    let arr = match params {
+        Some(Value::Array(a)) => a,
+        _ => return Ok(LogFilter::default()),
+    };
+    
+    let filter_obj = arr.get(0).cloned().unwrap_or(json!({}));
+    serde_json::from_value(filter_obj).map_err(|e| format!("Invalid filter: {}", e))
+}
+
 // === Ryther-specific implementations ===
 
-async fn ryther_node_info(node: &RytherNode, id: Value) -> RpcResponse {
-    let stats = node.stats().await;
-    let state = node.state().await;
+async fn ryther_node_info(state: &RpcState, id: Value) -> RpcResponse {
+    let stats = state.node.stats().await;
+    let node_state = state.node.state().await;
     
     RpcResponse::success(id, json!({
-        "peerId": hex::encode(node.peer_id()),
-        "state": format!("{:?}", state),
+        "peerId": hex::encode(state.node.peer_id()),
+        "state": format!("{:?}", node_state),
         "currentRound": stats.current_round,
         "eventsCreated": stats.events_created,
         "eventsReceived": stats.events_received,
         "roundsCommitted": stats.rounds_committed,
         "transactionsProcessed": stats.transactions_processed,
         "connectedPeers": stats.connected_peers,
+        "blocksStored": state.blocks.block_count(),
         "version": "0.1.0"
     }))
 }
 
-async fn ryther_dag_info(node: &RytherNode, id: Value) -> RpcResponse {
-    let stats = node.stats().await;
+async fn ryther_dag_info(state: &RpcState, id: Value) -> RpcResponse {
+    let stats = state.node.stats().await;
     
     RpcResponse::success(id, json!({
         "maxRound": stats.current_round,
         "totalEvents": stats.events_received + stats.events_created,
+        "latestBlock": state.blocks.latest_number(),
     }))
 }
 
-async fn ryther_get_peers(node: &RytherNode, id: Value) -> RpcResponse {
-    let stats = node.stats().await;
+async fn ryther_get_peers(state: &RpcState, id: Value) -> RpcResponse {
+    let stats = state.node.stats().await;
     
     RpcResponse::success(id, json!({
         "count": stats.connected_peers,
@@ -226,7 +425,7 @@ async fn ryther_get_peers(node: &RytherNode, id: Value) -> RpcResponse {
     }))
 }
 
-async fn ryther_pool_status(node: &RytherNode, id: Value) -> RpcResponse {
+fn ryther_pool_status(id: Value) -> RpcResponse {
     RpcResponse::success(id, json!({
         "pending": 0,
         "queued": 0,
@@ -239,8 +438,8 @@ fn net_version(id: Value) -> RpcResponse {
     RpcResponse::success(id, json!("1"))
 }
 
-async fn net_peer_count(node: &RytherNode, id: Value) -> RpcResponse {
-    let stats = node.stats().await;
+async fn net_peer_count(state: &RpcState, id: Value) -> RpcResponse {
+    let stats = state.node.stats().await;
     RpcResponse::success(id, json!(format!("0x{:x}", stats.connected_peers)))
 }
 
@@ -269,7 +468,6 @@ fn web3_sha3(id: Value, params: Option<Value>) -> RpcResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::config::NodeConfig;
     
     #[test]
     fn test_rpc_response_success() {
@@ -287,6 +485,24 @@ mod tests {
         assert!(response.result.is_none());
         assert!(response.error.is_some());
         assert_eq!(response.error.unwrap().code, -32600);
+    }
+    
+    #[test]
+    fn test_parse_hash_param() {
+        let params = Some(json!(["0x0000000000000000000000000000000000000000000000000000000000000000"]));
+        let result = parse_hash_param(params);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), [0u8; 32]);
+    }
+    
+    #[test]
+    fn test_parse_block_params() {
+        let params = Some(json!(["latest", true]));
+        let result = parse_block_params(params);
+        assert!(result.is_ok());
+        let (block_id, full_tx) = result.unwrap();
+        assert!(matches!(block_id, BlockId::Tag(_)));
+        assert!(full_tx);
     }
     
     #[tokio::test]

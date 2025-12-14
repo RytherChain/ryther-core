@@ -9,7 +9,7 @@ use crossbeam::channel;
 
 use crate::types::transaction::DecryptedTransaction;
 use crate::types::state::{ExecutionResult, ExecutionStatus, ReadSet, WriteSet, Log};
-use crate::types::{StateKey, U256};
+use crate::types::{Address, StateKey, U256};
 use super::mvcc::MultiVersionState;
 use super::conflict::{ConflictDetector, validate_batch};
 
@@ -184,7 +184,7 @@ impl ParallelExecutor {
         if tx.to.is_some() {
             // Transfer: read sender balance, write to both
             let sender_balance_key = StateKey {
-                address: tx.from,
+                address: tx.from.0,
                 slot: U256::ZERO, // Balance slot
             };
             
@@ -229,8 +229,8 @@ mod tests {
     
     fn make_tx(seq: u64, from: u8, to: u8) -> DecryptedTransaction {
         DecryptedTransaction {
-            from: [from; 20],
-            to: Some([to; 20]),
+            from: Address([from; 20]),
+            to: Some(Address([to; 20])),
             value: U256::from_u64(100),
             gas_limit: 21000,
             gas_price: U256::from_u64(1_000_000_000),
