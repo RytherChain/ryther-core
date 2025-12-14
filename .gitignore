@@ -1,0 +1,29 @@
+# Build artifacts
+/target
+debug/
+release/
+
+# Cargo lock (optional for libraries)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime files
+config.json
+*.log
+data/
+
+# Private keys (never commit these!)
+*.pem
+*.key
+*.secret
+validator_key*
+keystore/
