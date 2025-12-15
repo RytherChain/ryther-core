@@ -2,10 +2,10 @@
 //!
 //! Implements speculative parallel execution with conflict detection.
 
-pub mod mvcc;
 pub mod conflict;
 pub mod executor;
+pub mod mvcc;
 
-pub use mvcc::MultiVersionState;
 pub use conflict::ConflictDetector;
 pub use executor::ParallelExecutor;
+pub use mvcc::MultiVersionState;

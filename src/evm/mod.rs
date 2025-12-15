@@ -6,4 +6,4 @@
 
 pub mod vm;
 
-pub use vm::{RytherVm, VmResult, VmError};
+pub use vm::{RytherVm, VmError, VmResult};

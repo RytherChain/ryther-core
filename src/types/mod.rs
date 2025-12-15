@@ -3,18 +3,18 @@
 //! All fundamental types are defined here with explicit byte layouts
 //! and invariant documentation.
 
-pub mod lamport;
+pub mod block;
 pub mod event;
+pub mod lamport;
+pub mod state;
 pub mod transaction;
 pub mod validator;
-pub mod state;
-pub mod block;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 // Re-export block types
-pub use block::{Block, TransactionReceipt, Log, LogFilter, BlockId};
+pub use block::{Block, BlockId, Log, LogFilter, TransactionReceipt};
 
 /// Ethereum-compatible 20-byte address.
 #[derive(Clone, Copy, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -24,14 +24,14 @@ impl Address {
     pub const fn zero() -> Self {
         Address([0u8; 20])
     }
-    
+
     pub fn from_slice(slice: &[u8]) -> Self {
         let mut addr = [0u8; 20];
         let len = slice.len().min(20);
         addr[20 - len..].copy_from_slice(&slice[slice.len() - len..]);
         Address(addr)
     }
-    
+
     pub fn as_bytes(&self) -> &[u8; 20] {
         &self.0
     }
@@ -107,14 +107,18 @@ impl fmt::Debug for ValidatorId {
 
 impl Serialize for ValidatorId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::Serializer {
+    where
+        S: serde::Serializer,
+    {
         serializer.serialize_bytes(&self.0)
     }
 }
 
 impl<'de> Deserialize<'de> for ValidatorId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
+    where
+        D: serde::Deserializer<'de>,
+    {
         let bytes: Vec<u8> = Vec::deserialize(deserializer)?;
         if bytes.len() != 48 {
             return Err(serde::de::Error::custom("ValidatorId must be 48 bytes"));
@@ -155,14 +159,18 @@ impl fmt::Debug for BlsSignature {
 
 impl Serialize for BlsSignature {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::Serializer {
+    where
+        S: serde::Serializer,
+    {
         serializer.serialize_bytes(&self.0)
     }
 }
 
 impl<'de> Deserialize<'de> for BlsSignature {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
+    where
+        D: serde::Deserializer<'de>,
+    {
         let bytes: Vec<u8> = Vec::deserialize(deserializer)?;
         if bytes.len() != 96 {
             return Err(serde::de::Error::custom("BlsSignature must be 96 bytes"));
@@ -174,7 +182,7 @@ impl<'de> Deserialize<'de> for BlsSignature {
 }
 
 // ============================================================================
-// STATE TYPES  
+// STATE TYPES
 // ============================================================================
 
 /// A key in the global state trie.
@@ -189,13 +197,16 @@ pub struct StateKey {
 
 impl StateKey {
     pub fn new(address: Address, slot: U256) -> Self {
-        Self { address: address.0, slot }
+        Self {
+            address: address.0,
+            slot,
+        }
     }
-    
+
     pub fn from_raw(address: [u8; 20], slot: U256) -> Self {
         Self { address, slot }
     }
-    
+
     /// Convert to bytes for hashing/storage
     pub fn to_bytes(&self) -> [u8; 52] {
         let mut out = [0u8; 52];
@@ -207,9 +218,12 @@ impl StateKey {
 
 impl fmt::Debug for StateKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StateKey({:?}:{})", 
+        write!(
+            f,
+            "StateKey({:?}:{})",
             hex::encode(&self.address[..4]),
-            self.slot)
+            self.slot
+        )
     }
 }
 
@@ -225,39 +239,39 @@ pub struct U256(pub [u64; 4]);
 impl U256 {
     pub const ZERO: U256 = U256([0, 0, 0, 0]);
     pub const ONE: U256 = U256([1, 0, 0, 0]);
-    
+
     pub fn from_u64(val: u64) -> Self {
         U256([val, 0, 0, 0])
     }
-    
+
     pub fn to_be_bytes(&self) -> [u8; 32] {
         let mut out = [0u8; 32];
         for (i, limb) in self.0.iter().rev().enumerate() {
-            out[i*8..(i+1)*8].copy_from_slice(&limb.to_be_bytes());
+            out[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_be_bytes());
         }
         out
     }
-    
+
     pub fn from_be_bytes(bytes: [u8; 32]) -> Self {
         let mut limbs = [0u64; 4];
         for (i, limb) in limbs.iter_mut().rev().enumerate() {
             let start = i * 8;
-            *limb = u64::from_be_bytes(bytes[start..start+8].try_into().unwrap());
+            *limb = u64::from_be_bytes(bytes[start..start + 8].try_into().unwrap());
         }
         U256(limbs)
     }
-    
+
     pub fn wrapping_add(self, other: Self) -> Self {
         let mut result = [0u64; 4];
         let mut carry = 0u64;
-        
+
         for i in 0..4 {
             let (sum, c1) = self.0[i].overflowing_add(other.0[i]);
             let (sum, c2) = sum.overflowing_add(carry);
             result[i] = sum;
             carry = (c1 as u64) + (c2 as u64);
         }
-        
+
         U256(result)
     }
 }
@@ -285,7 +299,7 @@ impl fmt::Display for U256 {
 
 /// Compute SHA-256 hash of input bytes.
 pub fn sha256(data: &[u8]) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().into()
@@ -293,7 +307,7 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 
 /// Compute Keccak-256 hash (Ethereum standard).
 pub fn keccak256(data: &[u8]) -> [u8; 32] {
-    use sha3::{Keccak256, Digest};
+    use sha3::{Digest, Keccak256};
     let mut hasher = Keccak256::new();
     hasher.update(data);
     hasher.finalize().into()
@@ -302,7 +316,7 @@ pub fn keccak256(data: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_u256_roundtrip() {
         let original = U256([0xDEADBEEF, 0xCAFEBABE, 0x12345678, 0xABCDEF00]);
@@ -310,7 +324,7 @@ mod tests {
         let recovered = U256::from_be_bytes(bytes);
         assert_eq!(original, recovered);
     }
-    
+
     #[test]
     fn test_state_key_bytes() {
         let key = StateKey {
@@ -321,7 +335,7 @@ mod tests {
         assert_eq!(bytes.len(), 52);
         assert_eq!(&bytes[0..20], &[0x42; 20]);
     }
-    
+
     #[test]
     fn test_validator_id_serde() {
         let id = ValidatorId([0xAB; 48]);

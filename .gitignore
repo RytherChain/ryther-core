@@ -1,5 +1,9 @@
 # Build artifacts
 /target
+target_*/
+error_*.log
+error_*.txt
+test_output.txt
 debug/
 release/
 

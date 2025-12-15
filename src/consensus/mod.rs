@@ -2,8 +2,8 @@
 //!
 //! Implements leaderless aBFT consensus using DAG structure.
 
-pub mod leader;
 pub mod commit;
+pub mod leader;
 
-pub use leader::elect_leader;
 pub use commit::CommitDetector;
+pub use leader::elect_leader;

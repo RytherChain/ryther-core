@@ -6,8 +6,8 @@
 pub mod bls;
 pub mod threshold;
 
-pub use bls::{SecretKey, PublicKey, Signature, AggregateSignature};
+pub use bls::{AggregateSignature, PublicKey, SecretKey, Signature};
 pub use threshold::{
-    ThresholdParams, ShamirSecretSharing, SecretShare,
-    ThresholdEncryptor, EncryptedPayload, DkgSession,
+    DkgSession, EncryptedPayload, SecretShare, ShamirSecretSharing, ThresholdEncryptor,
+    ThresholdParams,
 };

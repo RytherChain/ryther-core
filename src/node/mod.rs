@@ -5,15 +5,15 @@
 //! - Parallel EVM execution (RytherVM)
 //! - P2P networking
 
-pub mod config;
-pub mod node;
-pub mod mempool;
-pub mod rpc;
 pub mod blocks;
+pub mod config;
+pub mod mempool;
+pub mod node;
+pub mod rpc;
 
+pub use blocks::BlockStore;
 pub use config::NodeConfig;
 pub use config::ValidatorConfig;
-pub use node::RytherNode;
 pub use mempool::TransactionPool;
+pub use node::RytherNode;
 pub use rpc::start_rpc_server;
-pub use blocks::BlockStore;

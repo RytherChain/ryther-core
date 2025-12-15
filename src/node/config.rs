@@ -1,29 +1,30 @@
 //! Node configuration.
 
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 use crate::network::peer::PeerId;
+use crate::types::{Address, ValidatorId};
 
 /// Full node configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeConfig {
     /// Chain configuration
     pub chain: ChainConfig,
-    
+
     /// Network configuration
     pub network: NetworkConfig,
-    
+
     /// Storage configuration
     pub storage: StorageConfig,
-    
+
     /// Execution configuration
     pub execution: ExecutionConfig,
-    
+
     /// RPC configuration
     pub rpc: RpcConfig,
-    
+
     /// Validator configuration (if running as validator)
     pub validator: Option<ValidatorConfig>,
 }
@@ -46,12 +47,15 @@ impl Default for NodeConfig {
 pub struct ChainConfig {
     /// Chain ID
     pub chain_id: u64,
-    
+
     /// Genesis block hash
     pub genesis_hash: [u8; 32],
-    
+
     /// Network name
     pub network_name: String,
+
+    /// Initial validator set (genesis validators)
+    pub initial_validators: Vec<(ValidatorId, u64, Address)>,
 }
 
 impl Default for ChainConfig {
@@ -60,6 +64,7 @@ impl Default for ChainConfig {
             chain_id: 1,
             genesis_hash: [0; 32],
             network_name: "ryther-mainnet".to_string(),
+            initial_validators: vec![],
         }
     }
 }
@@ -69,15 +74,18 @@ impl Default for ChainConfig {
 pub struct NetworkConfig {
     /// Address to listen on
     pub listen_addr: SocketAddr,
-    
+
     /// Bootstrap peers
     pub bootstrap_peers: Vec<String>,
-    
+
     /// Maximum connected peers
     pub max_peers: usize,
-    
+
     /// Enable peer discovery
     pub enable_discovery: bool,
+
+    /// Connection timeout (ms)
+    pub connect_timeout_ms: u64,
 }
 
 impl Default for NetworkConfig {
@@ -87,6 +95,7 @@ impl Default for NetworkConfig {
             bootstrap_peers: vec![],
             max_peers: 50,
             enable_discovery: true,
+            connect_timeout_ms: 5000,
         }
     }
 }
@@ -96,13 +105,13 @@ impl Default for NetworkConfig {
 pub struct StorageConfig {
     /// Data directory
     pub data_dir: PathBuf,
-    
+
     /// State cache size (MB)
     pub state_cache_mb: usize,
-    
+
     /// Enable pruning
     pub enable_pruning: bool,
-    
+
     /// Blocks to keep when pruning
     pub prune_blocks: u64,
 }
@@ -123,10 +132,10 @@ impl Default for StorageConfig {
 pub struct ExecutionConfig {
     /// Number of parallel execution threads
     pub parallel_threads: usize,
-    
+
     /// Maximum transactions per block
     pub max_txs_per_block: usize,
-    
+
     /// Block gas limit
     pub block_gas_limit: u64,
 }
@@ -146,16 +155,16 @@ impl Default for ExecutionConfig {
 pub struct RpcConfig {
     /// Enable RPC server
     pub enabled: bool,
-    
+
     /// RPC listen address
     pub listen_addr: SocketAddr,
-    
+
     /// Enable WebSocket
     pub enable_ws: bool,
-    
+
     /// WebSocket address
     pub ws_addr: SocketAddr,
-    
+
     /// Allowed origins (CORS)
     pub allowed_origins: Vec<String>,
 }
@@ -177,10 +186,10 @@ impl Default for RpcConfig {
 pub struct ValidatorConfig {
     /// Validator private key path
     pub key_path: PathBuf,
-    
+
     /// Enable block production
     pub produce_blocks: bool,
-    
+
     /// Minimum stake required
     pub min_stake: u64,
 }
@@ -188,22 +197,20 @@ pub struct ValidatorConfig {
 impl NodeConfig {
     /// Load configuration from file.
     pub fn load(path: &PathBuf) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read config: {}", e))?;
-        
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("Failed to read config: {}", e))?;
+
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
     }
-    
+
     /// Save configuration to file.
     pub fn save(&self, path: &PathBuf) -> Result<(), String> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        
-        std::fs::write(path, content)
-            .map_err(|e| format!("Failed to write config: {}", e))
+
+        std::fs::write(path, content).map_err(|e| format!("Failed to write config: {}", e))
     }
-    
+
     /// Check if running as validator.
     pub fn is_validator(&self) -> bool {
         self.validator.is_some()
@@ -213,23 +220,23 @@ impl NodeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_default_config() {
         let config = NodeConfig::default();
-        
+
         assert_eq!(config.chain.chain_id, 1);
         assert_eq!(config.network.max_peers, 50);
         assert!(config.rpc.enabled);
         assert!(!config.is_validator());
     }
-    
+
     #[test]
     fn test_config_serialization() {
         let config = NodeConfig::default();
         let json = serde_json::to_string(&config).unwrap();
         let recovered: NodeConfig = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(config.chain.chain_id, recovered.chain.chain_id);
     }
 }
